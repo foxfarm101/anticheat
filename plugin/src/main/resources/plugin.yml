@@ -1,0 +1,4 @@
+name: FoxAntiCheat
+version: 0.2.0
+main: dev.fox.anticheat.AntiCheatPlugin
+description: Java observation adapter with a C++ detection engine.

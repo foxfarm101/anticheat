@@ -1,0 +1,31 @@
+# Build output
+/build/
+/out/
+
+# Native build artifacts
+*.dll
+*.lib
+*.exp
+*.obj
+*.pdb
+*.ilk
+
+# Java build artifacts
+*.class
+*.jar
+
+# IDE/editor
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
