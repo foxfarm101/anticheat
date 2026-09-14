@@ -1,5 +1,5 @@
 /**
- * fastbreak.cpp implements the FastBreak deetection logic
+ * fastbreak.cpp implements the FastBreak detection logic
  */
 
 #include "fastbreak.hpp"
@@ -13,30 +13,42 @@
 namespace ac{
 
     namespace{
+        // Is this MiningContext usable for evaluating the mining attempt?
         bool usable(const MiningContext& c){
-            return c.available &&
-                std::isfinite(c.damage_per_tick) &&
-                c.damage_per_tick > 0 &&
-                c.damage_per_tick < 1;
+            return c.available &&                    // Java adapter successfully collected the mining context
+                std::isfinite(c.damage_per_tick) &&  // Value is a normal finite number, not positive or negative infinity
+                c.damage_per_tick > 0 &&             // Player is capable of making mining progress
+                c.damage_per_tick < 1;               // Block takes more than one increment of mining progress (>=1 represents instant breaking behavior)
         }
         
+        // Did this MiningContext remain unchanged between DigAction::start and DigAction::finish?
         bool same(const MiningContext& a, const MiningContext& b){
-            return usable(a) && usable(b) && a.world_uuid == b.world_uuid
-                && a.state_key == b.state_key && a.damage_per_tick == b.damage_per_tick;
+            return usable(a) &&
+                   usable(b) &&
+                   a.world_uuid == b.world_uuid &&
+                   a.state_key == b.state_key &&
+                   a.damage_per_tick == b.damage_per_tick;
         }
+
+        // Calculate elapsed milliseconds between DigAction::start and DigAction::finish observations?
         double elapsed_ms(std::uint64_t end, std::uint64_t start){
             return end >= start ? static_cast<double>(end - start) / 1e6 : -1.0;
         }
+
+        // Format a double as a string with 3 decimal places
         std::string number(double value){
             std::ostringstream out;
             out.imbue(std::locale::classic());
             out << std::fixed << std::setprecision(3) << value;
             return out.str();
         }
+
+        // Format a BlockPosition as "x,y,z"
         std::string position(const BlockPosition& p){
             return std::to_string(p.x) + "," + std::to_string(p.y) + "," + std::to_string(p.z);
         }
     }
+
     FastBreakCheck::FastBreakCheck(FastBreakSettings settings) : settings_(settings){
         if(!std::isfinite(settings.maximum_ratio) || settings.maximum_ratio <= 0
             || settings.maximum_ratio >= 1 || !std::isfinite(settings.grace_ms)
@@ -48,6 +60,7 @@ namespace ac{
             throw std::invalid_argument("Invalid FastBreak settings");
         }
     }
+    
     void FastBreakCheck::registerHandlers(CheckManager& manager){
         manager.on<DigEvent>([this](const DigEvent& event, CheckContext& ctx){ on_dig(event, ctx); });
         manager.on<MiningContextEvent>([this](const MiningContextEvent& event, CheckContext& ctx){ on_context(event, ctx); });
