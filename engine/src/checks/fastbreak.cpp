@@ -49,6 +49,8 @@ namespace ac{
         }
     }
 
+    // Construct a FastBreakCheck with its configuration and ensure the configuration is valid
+    // : settings_(settings) initializes the entire settings_ member using the settings argument
     FastBreakCheck::FastBreakCheck(FastBreakSettings settings) : settings_(settings){
         if(!std::isfinite(settings.maximum_ratio) || settings.maximum_ratio <= 0
             || settings.maximum_ratio >= 1 || !std::isfinite(settings.grace_ms)
