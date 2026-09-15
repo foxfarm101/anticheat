@@ -114,7 +114,9 @@ namespace ac{
             std::visit([&](const auto& payload){
                 auto found = handlers_.find(std::type_index(typeid(payload)));
                 if(found != handlers_.end()){
-                    for(auto& fn : found->second){ fn(event, ctx); }
+                    for(auto& fn : found->second){
+                        fn(event, ctx);
+                    }
                 }
             }, event.payload);
         }

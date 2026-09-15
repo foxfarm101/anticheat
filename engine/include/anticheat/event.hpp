@@ -14,7 +14,7 @@ namespace ac{
     // Shared identity, ordering, and timing metadata.
     // Monotonic timestamps use the Java adapter's origin, not C++'s steady_clock.
     struct EventHeader{
-        SessionId session{};
+        SessionId session{};         // ID for the player session this observation belongs to
         std::uint64_t ordinal{};     // Delivery order of normalized events
         std::uint64_t observed_ns{}; // Time when the Java adapter first observed the incoming packet
         std::uint64_t epoch_ms{};
@@ -91,8 +91,8 @@ namespace ac{
 
     // Pairs shared metadata with one typed event payload
     struct Event{
-        EventHeader header;
-        Payload payload;
+        EventHeader header; // observation metadata
+        Payload payload;    // typed observation data
     };
 
 }

@@ -30,6 +30,7 @@ namespace ac{
             DigEvent dig;
         };
 
+        // FastBreak detector configuration settings
         FastBreakSettings settings_;
 
         // Active mining attempt, if one is currently being tracked.
