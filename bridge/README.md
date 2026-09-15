@@ -19,7 +19,7 @@ bytes. Events are capped at 8192 bytes. Unknown schemas/types, trailing bytes,
 truncation, invalid booleans/enums, and non-ASCII identifiers are rejected.
 This restricted text encoding is for UUIDs/game identifiers, not player chat.
 
-## Common header (48 bytes)
+## Header (48 bytes)
 
 ```
 u32 magic = 0x43415846 (bytes "FXAC")
@@ -39,25 +39,43 @@ is a snapshot, not an assertion that wall-clock intervals equal a number of tick
 ## Bodies
 
 ```
-1 SessionStart: text uuid, u32 client_protocol, u32 server_model
-2 SessionEnd:   empty
-3 Reset:        text reason
-4 Tick:         empty
-5 Dig:          u64 packet_sequence, u64 read_batch, u64 sampled_ns,
-                u8 action (0=start, 1=abort, 2=finish), u8 face (0..5),
-                i32 x, i32 y, i32 z, MiningContext
-6 Context:      i32 x, i32 y, i32 z, MiningContext
+1 SessionStart:
+    text uuid,
+    u32 client_protocol,
+    u32 server_model
+
+2 SessionEnd:
+    empty
+
+3 Reset:
+    text reason
+
+4 Tick:
+    empty
+
+5 Dig:
+    u64 packet_sequence,
+    u64 read_batch,
+    u64 sampled_ns,
+    u8 action (0=start, 1=abort, 2=finish),
+    u8 face (0..5),
+    i32 x,
+    i32 y,
+    i32 z,
+    MiningContext
+
+6 Context:
+    i32 x,
+    i32 y,
+    i32 z,
+    MiningContext
 
 MiningContext:
     text world_uuid, text state_key, text block, text tool,
     text unavailable_reason, f64 damage_per_tick, u8 available
 ```
 
-The server-model value 10808 is an internal adapter label, not a protocol number.
-Protocol 47 is the configured direct 1.8.x baseline; this adapter does not discover
-clients hidden behind a translator or distinguish 1.8.x patches sharing a protocol.
+The server-model value 10808 is an internal adapter ID.
+Protocol 47 is the configured direct 1.8.x baseline; this adapter does not discover clients hidden behind a translator or distinguish 1.8.x patches sharing a protocol.
 
-When adding telemetry, update the typed event and both schema ends together and
-add a cross-language smoke test. The public Check interface and generic dispatcher
-do not change. Batched transfers or an out-of-process transport can be added later;
-this starter makes one synchronous call per normalized observation.
+When adding telemetry, update the typed event and both schema ends together and add a cross-language smoke test. The public Check interface and generic dispatcher do not change. Batched transfers or an out-of-process transport can be added later; this starter makes one synchronous call per normalized observation.
