@@ -4,43 +4,43 @@ Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapte
 
 ## High level overview
 
-Player starts mining block
+1. Player starts mining block
 
-Raw bytes for `DigAction::start` are sent to the server
+2. Raw bytes for `DigAction::start` are sent to the server
 
-Netty receives the raw bytes and decodes them into a `PacketPlayInBlockDig` packet
+3. Netty receives the raw bytes and decodes them into a `PacketPlayInBlockDig` packet
 
-Java adapter observes the decoded packet
+4. Java adapter observes the decoded packet
 
-Java adapter takes a snapshot (sample) of the relevant server state (`MiningContext`)
+5. Java adapter takes a snapshot (sample) of the relevant server state (`MiningContext`)
 
-Java adapter converts the `PacketPlayInBlockDig` packet + sampled server state (`MiningContext`) into the server-specific `DigEvent` format
+6. Java adapter converts the `PacketPlayInBlockDig` packet + sampled server state (`MiningContext`) into the server-specific `DigEvent` format
 
-JNI sends the serialized observation (`DigEvent` + its `EventHeader`) to C++ (`bridge/jni.cpp`)
+7. JNI sends the serialized observation (`DigEvent` + its `EventHeader`) to C++ (`bridge/jni.cpp`)
 
-`wire.cpp` decodes the serialized observation into the C++ `ac::Event` whose payload contains the C++ `DigEvent` struct
+8. `wire.cpp` decodes the serialized observation into the C++ `ac::Event` whose payload contains the C++ `DigEvent` struct
 
-The detection engine (`engine.cpp`) processes the event via `Engine::process()`, which gets the player session via `EventHeader::session`, updates the session state, and creates `CheckContext`
+9. The detection engine (`engine.cpp`) processes the event via `Engine::process()`, which gets the player session via `EventHeader::session`, updates the session state, and creates `CheckContext`
 
-`CheckManager` sends the `DigEvent` and its `CheckContext` to the checks that have handlers registered for `DigEvent` observation type
+10. `CheckManager` sends the `DigEvent` and its `CheckContext` to the checks that have handlers registered for `DigEvent` observation type
 
-`FastBreakCheck` is one of those interested checks; it applies the FastBreak detection logic to that observation and evaluates suspiciousness
+11. `FastBreakCheck` is one of those interested checks; it applies the FastBreak detection logic to that observation and evaluates suspiciousness
 
-`Finding`(s) are returned to Java from C++ via JNI
+12. `Finding`(s) are returned to Java from C++ via JNI
 
 ### Detection logic
 
-`DigEvent` -> `FastBreakCheck::on_dig()`
+- `DigEvent` -> `FastBreakCheck::on_dig()`
 
-Track START/ABORT/FINISH
+- Track START/ABORT/FINISH
 
-Compare START and FINISH timing
+- Compare START and FINISH timing
 
-Calculate expected mining duration
+- Calculate expected mining duration
 
-Determine whether the attempt is within a suspicious threshold
+- Determine whether the attempt is within a suspicious threshold
 
-Produce `Finding`(s)
+- Produce `Finding`(s)
 
 ## Boundaries
 
