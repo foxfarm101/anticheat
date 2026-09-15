@@ -62,102 +62,237 @@ namespace ac{
             throw std::invalid_argument("Invalid FastBreak settings");
         }
     }
-    
+
     void FastBreakCheck::registerHandlers(CheckManager& manager){
-        manager.on<DigEvent>([this](const DigEvent& event, CheckContext& ctx){ on_dig(event, ctx); });
-        manager.on<MiningContextEvent>([this](const MiningContextEvent& event, CheckContext& ctx){ on_context(event, ctx); });
-        manager.on<TickEvent>([this](const TickEvent& event, CheckContext& ctx){ on_tick(event, ctx); });
+        manager.on<DigEvent>([this](const DigEvent& event, CheckContext& ctx){
+            on_dig(event, ctx);
+        });
+        manager.on<MiningContextEvent>([this](const MiningContextEvent& event, CheckContext& ctx){
+            on_context(event, ctx);
+        });
+        manager.on<TickEvent>([this](const TickEvent& event, CheckContext& ctx){
+            on_tick(event, ctx);
+        });
     }
+
+    // Clear the currently tracked attempt and suspicious sample history
     void FastBreakCheck::reset(std::string_view){
-        attempt_.reset(); samples_ = 0; last_sample_.reset();
+        attempt_.reset(); samples_ = 0;
+        last_sample_.reset();
     }
+
+    // Clear suspicious FastBreak samples when the configured time window expires
     void FastBreakCheck::on_tick(const TickEvent&, CheckContext& ctx){
         if(attempt_ && (ctx.event.observed_ns < attempt_->header.observed_ns
             || elapsed_ms(ctx.event.observed_ns, attempt_->header.observed_ns) > 60000)){
             reset("expired");
         }
     }
+
+    // Process changes to the server-side conditions affecting the active attempt
     void FastBreakCheck::on_context(const MiningContextEvent& event, CheckContext& ctx){
         if(attempt_ && (!(attempt_->dig.position == event.position)
             || !same(attempt_->dig.context, event.context))){
             reset("context_changed");
-            ctx.emit("trace", std::string(id()), "context_changed_reset");
+            ctx.emit(
+                "trace",
+                std::string(id()),
+                "context_changed_reset"
+            );
         }
     }
+
+    // Process client digging observations
     void FastBreakCheck::on_dig(const DigEvent& event, CheckContext& ctx){
-        // Model selection belongs to the check, not to the generic engine.
-        if(ctx.player.identity.client_protocol != 47 || ctx.player.identity.server_model != 10808){ return; }
+        // Only evaluate minecraft client versions supported by this Spigot 1.8.8 FastBreak detection logic
+        //  Minecraft version: 1.8.8 (protocol 47)
+        //  Spigot server: 1.8.8 (server model 10808)
+        if(ctx.player.identity.client_protocol != 47 /*1.8.x = protocol 47*/ || ctx.player.identity.server_model != 10808){
+            return;
+        }
+        
         if(event.action == DigAction::abort){
             reset("abort");
-            ctx.emit("trace", std::string(id()), "abort_reset");
+            ctx.emit( // record that the abort caused the detector state to reset
+                "trace",
+                std::string(id()),
+                "abort_reset"
+            );
             return;
         }
+
         double queued = elapsed_ms(event.sampled_ns, ctx.event.observed_ns);
+
+        // Reject late observations becausae the sampled server state won't match the state the packet had when it arrived
         if(queued < 0 || queued > settings_.maximum_queue_ms){
-            reset("delayed_observation"); return;
+            reset("delayed_observation");
+            return;
         }
+
         if(event.action == DigAction::start){
-            if(attempt_){ reset("replaced_start"); }
-            double expected = usable(event.context) ? std::ceil(1.0 / event.context.damage_per_tick) * 50.0 : 0.0;
+            if(attempt_){ // previous mining attempt is still being tracked
+                reset("dig_replaced_start");
+            }
+
+            // Convert damage-per-tick into the expected mining duration under the current game conditions
+            // damage_per_tick = how much block break progress is being made during each tick
+            /**
+             * Mining progress in vanilla minecraft goes from 0.0 (unbroken) to 1.0 (broken)
+             * On each tick: progress += damage_per_tick
+             * ex. damage_per_tick = 0.20:
+             *   . Tick 1 -> 0.20
+             *   . Tick 2 -> 0.40
+             *   . Tick 3 -> 0.60
+             *   . Tick 4 -> 0.80
+             *   . Tick 5 -> 1.00 (broken)
+             * 
+             * Therefore, required ticks = ceil(1.0 / damage_per_tick).
+             * @ 20 TPS, each tick = 50ms.
+             */
+            double expected = 0.0;
+            if(usable(event.context)){
+                expected = std::ceil(1.0 / event.context.damage_per_tick) * 50.0;
+                // * 50.0 converts the required tick count to milliseconds, since 1 tick = 50ms.
+                // FastBreak uses milliseconds when comparing expected and observed mining duration.
+            }
+
             if(expected < settings_.minimum_expected_ms || expected > 60000 || expected <= 0){
                 reset("unsupported");
-                ctx.emit("trace", std::string(id()), "start_skipped",
-                    {{"reason", event.context.unavailable_reason}});
+                ctx.emit(
+                    "trace",
+                    std::string(id()),
+                    "dig_start_skipped",
+                    {
+                        {"reason", event.context.unavailable_reason}
+                    }
+                );
                 return;
             }
+
+            // Begin tracking this mining attempt and trace its starting state
             attempt_ = Attempt{ctx.event, event};
-            ctx.emit("trace", std::string(id()), "start",
-                {{"position", position(event.position)}, {"block", event.context.block},
-                {"tool", event.context.tool}, {"packet", std::to_string(event.packet_sequence)},
-                {"expected_ms", number(expected)}});
+            ctx.emit(
+                "trace",
+                std::string(id()),
+                "dig_start",
+                {
+                    {"position", position(event.position)},
+                    {"block", event.context.block},
+                    {"tool", event.context.tool},
+                    {"packet", std::to_string(event.packet_sequence)},
+                    {"expected_ms", number(expected)}
+                }
+            );
+
             return;
         }
+
         if(!attempt_){
-            ctx.emit("trace", std::string(id()), "finish_without_start"); return;
+            ctx.emit(
+                "trace",
+                std::string(id()),
+                "dig_finish_without_start"
+            );
+            return;
         }
+
+        // Store the currently tracked mining attempt
         const auto begin = std::move(*attempt_);
+        
+        // detector no longer tracking an attempt
         attempt_.reset();
+
         auto skip = [&](const char* reason){
-            reset(reason); ctx.emit("trace", std::string(id()), "finish_skipped", {{"reason", reason}});
+            reset(reason);
+            ctx.emit(
+                "trace",
+                std::string(id()),
+                "dig_finish_skipped",
+                {
+                    {"reason", reason}
+                }
+            );
         };
+
         if(!(begin.dig.position == event.position) || event.packet_sequence <= begin.dig.packet_sequence){
-            skip("mismatched_finish"); return;
+            skip("mismatched_finish");
+            return;
         }
+
         if(!same(begin.dig.context, event.context)){
-            skip("changed_context"); return;
+            skip("changed_context");
+            return;
         }
+
         if(event.read_batch <= begin.dig.read_batch){
-            skip("same_or_invalid_read_batch"); return;
+            skip("same_or_invalid_read_batch");
+            return;
         }
+
+        // packet observation time elapsed between DigAction::start and DigAction::finish
         double observed = elapsed_ms(ctx.event.observed_ns, begin.header.observed_ns);
+        // server-state snapshot time elapsed between DigAction::start and DigAction::finish
         double sampled = elapsed_ms(event.sampled_ns, begin.dig.sampled_ns);
         if(observed < 0 || sampled < 0 || observed > 60000
             || std::abs(observed - sampled) > settings_.maximum_queue_ms){
-            skip("uncertain_timing"); return;
+            skip("uncertain_timing");
+            return;
         }
+
+        // Calculate the expected mine duration from the MiningContext conditions when the DigAction::start observation occurred
         double expected = std::ceil(1.0 / begin.dig.context.damage_per_tick) * 50.0;
-        double threshold = std::max(0.0, expected * settings_.maximum_ratio - settings_.grace_ms);
-        bool suspicious = observed < threshold;
+        
+        // Calculate how fast the attempt must finish to be considered suspicious
+        double sus_threshold = std::max(0.0, expected * settings_.maximum_ratio - settings_.grace_ms);
+        
+        // If the observed mining duration is faster than the suspicious threshold, suspicious=true.
+        bool suspicious = observed < sus_threshold;
+
+        // Evidence for the Finding
         Evidence evidence{
             {"start_event", std::to_string(begin.header.ordinal)},
             {"start_packet", std::to_string(begin.dig.packet_sequence)},
             {"finish_packet", std::to_string(event.packet_sequence)},
             {"start_observed_ns", std::to_string(begin.header.observed_ns)},
-            {"world", event.context.world_uuid}, {"position", position(event.position)},
-            {"block", event.context.block}, {"tool", event.context.tool},
-            {"observed_ms", number(observed)}, {"expected_ms", number(expected)},
-            {"threshold_ms", number(threshold)}, {"server_break_outcome", "NOT_MEASURED"}
+            {"world", event.context.world_uuid},
+            {"position", position(event.position)},
+            {"block", event.context.block},
+            {"tool", event.context.tool},
+            {"observed_ms", number(observed)},
+            {"expected_ms", number(expected)},
+            {"sus_threshold_ms", number(sus_threshold)},
+            {"server_break_outcome", "NOT_MEASURED"}
         };
-        ctx.emit("trace", std::string(id()), suspicious ? "early_finish_sample" : "finish_no_flag", evidence);
-        if(!suspicious){ samples_ = 0; last_sample_.reset(); return; }
+
+        // Track the finished mining attempt and the detector's decision about it
+        // If there are enough suspicious mining durations in a certain timespan, they can be escalated to an actual suspicious finding.
+        ctx.emit(
+            "trace",
+            std::string(id()),
+            suspicious ? "dig_early_finish_sample" : "dig_finish_normal_sample", evidence
+        );
+
+        if(!suspicious){
+            samples_ = 0;
+            last_sample_.reset();
+            return;
+        }
+
         if(last_sample_ && (ctx.event.observed_ns < *last_sample_
             || elapsed_ms(ctx.event.observed_ns, *last_sample_) > settings_.sample_window_ms)){
             samples_ = 0;
         }
+
         last_sample_ = ctx.event.observed_ns;
+
         if(++samples_ >= settings_.alert_after){
             evidence.emplace_back("samples", std::to_string(samples_));
-            ctx.emit("suspicious", std::string(id()), "repeated_early_completion_requests", std::move(evidence));
+            ctx.emit(
+                "suspicious",
+                std::string(id()),
+                "repeated_early_completion_requests",
+                std::move(evidence)
+            );
             samples_ = 0;
         }
     }

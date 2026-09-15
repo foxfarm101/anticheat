@@ -15,8 +15,8 @@ namespace ac{
     // Monotonic timestamps use the Java adapter's origin, not C++'s steady_clock.
     struct EventHeader{
         SessionId session{};
-        std::uint64_t ordinal{};        // Delivery order of normalized events
-        std::uint64_t observed_ns{};
+        std::uint64_t ordinal{};     // Delivery order of normalized events
+        std::uint64_t observed_ns{}; // Time when the Java adapter first observed the incoming packet
         std::uint64_t epoch_ms{};
         std::uint64_t server_tick{};
     };
@@ -25,7 +25,7 @@ namespace ac{
     struct SessionStart{
         std::string player_uuid;
         std::uint32_t client_protocol{};
-        std::uint32_t server_model{};   // Our label: 10808 = pinned Spigot 1.8.8
+        std::uint32_t server_model{}; // our detection model ID for Spigot 1.8.8: 10808
     };
 
     struct SessionEnd{}; // end of player session
@@ -70,9 +70,9 @@ namespace ac{
 
     // Observed digging request with server context
     struct DigEvent{
-        std::uint64_t packet_sequence{};
-        std::uint64_t read_batch{};
-        std::uint64_t sampled_ns{};
+        std::uint64_t packet_sequence{}; // ID given to each packet decoded by the Java adapter
+        std::uint64_t read_batch{};      // The packets Netty delivered to the server in one network read
+        std::uint64_t sampled_ns{};      // Time when the Java adapter sampled (took a snapshot of) the relevant server state
         DigAction     action{};
         std::uint8_t  face{};
         BlockPosition position;

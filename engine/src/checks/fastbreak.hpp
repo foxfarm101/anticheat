@@ -19,7 +19,7 @@ namespace ac{
         double minimum_expected_ms = 250.0;
         double maximum_queue_ms    = 200.0;
         std::uint32_t alert_after  = 3;
-        double sample_window_ms    = 30000.0;
+        double sample_window_ms    = 30000.0; // max time suspicious samples can remain grouped toward alert_after
     };
 
     // Detects mining attempts that finish faster than expected

@@ -36,9 +36,7 @@ namespace ac{
 
         // Report a finding for the observation currently being processed
         void emit(std::string level, std::string id, std::string message, Evidence evidence = {}){
-            if(level == "trace" && !trace_enabled){
-                return;
-            }
+            if(level == "trace" && !trace_enabled) return;
 
             // Construct and append a new finding to the output collection
             output.push_back({
