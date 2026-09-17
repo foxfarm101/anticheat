@@ -124,6 +124,7 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener{
         }
     }
 
+    // Clear Java-side mining tracking and tell the C++ checks to reset their detection state.
     private void reset(Session session, String reason){
         session.watchedBlock = null;
         begin(EventWriter.RESET, session, now(), System.currentTimeMillis()).text(reason);
@@ -155,8 +156,9 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener{
         session.watchedBlock = event.action == DigEvent.Action.START ? event : null;
     }
 
+    // periodically update active sessions, sample watched mining state, and send TickEvents.
     private void onTick(){
-        if(!running){ return; }
+        if(!running) return;
         Iterator<Session> iterator = sessions.values().iterator();
         while(iterator.hasNext()){
             Session session = iterator.next();
@@ -168,68 +170,107 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener{
                 DigEvent target = session.watchedBlock;
                 if(target != null){
                     MiningContext context = sampler.sample(session.player, target);
+                    
                     begin(EventWriter.CONTEXT, session, now(), System.currentTimeMillis())
                         .context(target.x, target.y, target.z, context);
-                    send();
+                        send();
+
                     // Stop polling an obsolete target; C++ receives the unavailable snapshot first.
-                    if(!context.available){ session.watchedBlock = null; }
+                    if(!context.available){
+                        session.watchedBlock = null;
+                    }
                 }
-                begin(EventWriter.TICK, session, now(), System.currentTimeMillis()); send();
+                begin(EventWriter.TICK, session, now(), System.currentTimeMillis());
+                send();
             }catch(RuntimeException | LinkageError error){
                 session.active = false;
                 getLogger().log(Level.SEVERE, "Native processing disabled for session=" + session.id, error);
             }
         }
     }
+
+    // Create a new anticheat session and attach packet observation when a player joins
     private void join(Player player){
-        if(!running || sessions.containsKey(player.getUniqueId())){ return; }
+        if(!running || sessions.containsKey(player.getUniqueId()))
+            return;
+
         Session session = new Session(nextSession++, player);
         sessions.put(player.getUniqueId(), session);
+
         try{
             begin(EventWriter.START, session, now(), System.currentTimeMillis())
                 .session(player.getUniqueId().toString(), 47, 10808);
-            send(); packets.attach(session);
+            send();
+            packets.attach(session);
         }catch(RuntimeException | LinkageError error){
             session.active = false;
             getLogger().log(Level.SEVERE, "Cannot attach session=" + session.id, error);
         }
     }
+
+    // End a player session, detach packet observation, and notify the C++ engine.
     private void end(Session session){
         session.active = false;
         session.watchedBlock = null;
-        if(packets != null){ packets.detach(session.id); }
+        if(packets != null){
+            packets.detach(session.id);
+        }
         if(engine != null){
             try{ begin(EventWriter.END, session, now(), System.currentTimeMillis()); send(); }
             catch(RuntimeException | LinkageError error){ getLogger().log(Level.SEVERE, "Session cleanup failed", error); }
         }
     }
+
+    // Start an anticheat session when a player joins the server.
     @EventHandler
-    public void onJoin(PlayerJoinEvent event){ join(event.getPlayer()); }
+    public void onJoin(PlayerJoinEvent event){
+        join(event.getPlayer());
+    }
+
+    // End and remove the player's anticheat session when they leave the server
     @EventHandler
     public void onQuit(PlayerQuitEvent event){
         Session session = sessions.remove(event.getPlayer().getUniqueId());
-        if(session != null){ end(session); }
+        if(session != null)
+            end(session);
     }
+
+    // Invalidate queued observations and reset check state after a server-recognized teleport
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onTeleport(PlayerTeleportEvent event){
         Session session = sessions.get(event.getPlayer().getUniqueId());
         if(session != null && session.active){
             // Also invalidates already queued observations from before the teleport.
             session.loss.incrementAndGet();
-            try{ reconcileLoss(session); }
-            catch(RuntimeException | LinkageError error){ session.active = false; }
+            try{
+                reconcileLoss(session);
+            }catch(RuntimeException | LinkageError error){
+                session.active = false;
+            }
         }
     }
+
+    // Stop observation, end all active sessions, and shut down the native C++ engine.
     @Override
     public void onDisable(){
         running = false;
-        if(ticker != null){ ticker.cancel(); ticker = null; }
-        if(packets != null){ packets.close(); }
-        for(Session session : sessions.values()){ end(session); }
+        if(ticker != null){
+            ticker.cancel(); ticker = null;
+        }
+        if(packets != null){
+            packets.close();
+        }
+        for(Session session : sessions.values()){
+            end(session);
+        }
         sessions.clear();
         if(engine != null){
-            try{ engine.close(); }
-            catch(RuntimeException | LinkageError error){ getLogger().log(Level.SEVERE, "Native cleanup failed", error); }
+            try{
+                engine.close();
+            }
+            catch(RuntimeException | LinkageError error){
+                getLogger().log(Level.SEVERE, "Native cleanup failed", error);
+            }
             engine = null;
         }
     }
