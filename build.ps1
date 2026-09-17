@@ -1,9 +1,16 @@
 param(
-    [Parameter(Mandatory=$true)][string]$Jdk,
-    [string]$ServerJar = (Join-Path $PSScriptRoot "..\server-1.8\spigot-1.8.8.jar")
+    [Parameter(Mandatory=$true)]
+    [string]$Jdk,
+
+    [string]$ServerJar
 )
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if(-not $ServerJar){
+    $ServerJar = Join-Path $PSScriptRoot "..\server-1.8\spigot-1.8.8.jar"
+}
 
 function Invoke-Checked([string]$Program, [string[]]$Arguments){
     & $Program @Arguments

@@ -2,6 +2,69 @@
 
 Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapter, in-process JNI bridge.
 
+## Architecture
+
+```
+/anticheat
+
+  engine/                              . C++ detection engine
+    include/anticheat/
+      event.hpp                        . normalized observation types
+      finding.hpp                      . detection results and evidence
+      check.hpp                        . check interface and CheckManager
+      engine.hpp                       . central engine and player sessions
+      builtins.hpp                     . built-in check creation interface
+
+    src/
+      engine.cpp                       . processes observations through the engine
+      finding.cpp                      . serializes Findings for Java
+
+      checks/
+        exampleCheat.hpp               . specific cheat detector definition and state
+        exampleCheat.cpp               . specific cheat detection logic
+        builtins.cpp                   . configures and creates built-in checks
+
+  bridge/                              . C++ side of Java <-> C++ communication
+    jni.cpp                            . receives JNI calls from Java
+    wire.hpp                           . observation decoding declarations
+    wire.cpp                           . decodes serialized observations into C++ Events
+    README.md                          . explains the Java <-> C++ data format
+
+  plugin/                              . integration between our anticheat and the Minecraft/Spigot server
+    src/main/
+      java/dev/fox/anticheat/
+        AntiCheatPlugin.java           . starts, stops, and connects plugin components
+        Session.java                   . Java-side player session tracking
+
+        packet/
+          PacketObserver.java          . observes decoded Minecraft packets
+
+        version/
+          MiningSampler.java           . samples relevant Spigot/NMS mining state
+
+        event/
+          DigEvent.java                . Java digging observation
+          MiningContext.java           . sampled mining-state snapshot
+
+        bridge/                        . Java side of Java ↔ C++ communication
+          EventWriter.java             . serializes observations into bytes
+          NativeBridge.java            . calls the C++ engine through JNI
+
+      resources/
+        plugin.yml                     . tells Spigot how to load the plugin
+        engine.conf                    . detection configuration
+
+  tests/                               . automated testing
+    engine_tests.cpp                   . tests C++ engine and detection behavior
+    NativeSmokeTest.java               . tests Java → JNI → C++ → Java
+
+  CMakeLists.txt                       . C++/JNI build configuration
+  build.ps1                            . Windows build/package script
+  .gitignore                           . files excluded from Git
+  README.md                            . project documentation
+```
+
+
 ## High level overview
 
 1. Player starts mining block
@@ -56,13 +119,13 @@ Java: decoded packets + main-thread server snapshots
 
 Decode and analyze packets, collect snapshots of the server state, handle player connections and plugin lifecycle, and then log returned findings.
 
-`plugin/` owns Minecraft integration, lifetime, threading, and context collection. Java does not calculate FastBreak durations, thresholds, accumulation, or verdicts.
+`/plugin/` contains the entire Java side of the anticheat, responsible for integrating Minecraft/Spigot with the C++ detection engine.
 
 ### JNI bridge
 
-The Java Native Interface framework allows Java code running inside the JVM to call and be called by C++ code. This will allow us to transfer normalized observations into C++ and return results.
+The JNI framework allows Java code running inside the JVM to call and be called by C++ code. This will allow us to transfer normalized observations into C++ and return results.
 
-`bridge/` owns only serialization and JNI.
+`/plugin/.../bridge/` contains specifically the Java <-> C++ communication code: serializing normalized observations and calling the C++ engine through JNI.
 
 ### C++ detection engine
 

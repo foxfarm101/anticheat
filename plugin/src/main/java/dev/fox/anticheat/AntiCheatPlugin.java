@@ -1,3 +1,7 @@
+/**
+ * AntiCheatPlugin.java starts/stops/connects plugins to eachother
+ */
+
 package dev.fox.anticheat;
 
 import dev.fox.anticheat.bridge.EventWriter;
@@ -36,8 +40,15 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener{
     private PacketObserver packets;
     private BukkitTask ticker;
     private boolean running;
-    private long now(){ return System.nanoTime() - originNanos; }
-    private long tick(){ return Integer.toUnsignedLong(MinecraftServer.currentTick); }
+
+    private long now(){
+        return System.nanoTime() - originNanos;
+    }
+
+
+    private long tick(){
+        return Integer.toUnsignedLong(MinecraftServer.currentTick);
+    }
 
     @Override
     public void onEnable(){

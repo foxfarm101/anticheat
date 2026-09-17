@@ -1,5 +1,7 @@
 /**
  * builtins.cpp constructs and configures the detection checks
+ * 
+ * “Built-in checks” simply mean detectors that ship as part of the anticheat, such as FastBreakCheck or FlyCheck.
  */
 
 #include "anticheat/builtins.hpp"
