@@ -46,7 +46,7 @@ struct Probe final : ac::Check{
     std::shared_ptr<int> hits;
     explicit Probe(std::shared_ptr<int> p) : hits(std::move(p)){}
     std::string_view id() const noexcept override{ return "test.multistream"; }
-    void subscribe(ac::CheckManager& manager) override{
+    void registerHandlers(ac::CheckManager& manager) override{
         manager.on<ac::TickEvent>([this](const ac::TickEvent&, ac::CheckContext&){ ++*hits; });
         manager.on<ac::DigEvent>([this](const ac::DigEvent&, ac::CheckContext&){ *hits += 10; });
     }

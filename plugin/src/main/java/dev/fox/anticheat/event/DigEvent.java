@@ -1,15 +1,45 @@
+/**
+ * DigEvent.java stores a copied digging request and its packet observation metadata.
+ */
+
 package dev.fox.anticheat.event;
 
-/** A copied observation, not a reference to a mutable NMS packet. */
 public final class DigEvent{
-    public enum Action{ START, ABORT, FINISH }
+    public enum Action{
+        START,
+        ABORT,
+        FINISH
+    }
+
     public final Action action;
-    public final int x, y, z, face;
-    public final long packetSequence, readBatch, observedNanos, epochMillis;
-    public DigEvent(Action action, int x, int y, int z, int face,
-                    long packetSequence, long readBatch, long observedNanos, long epochMillis){
-        this.action = action; this.x = x; this.y = y; this.z = z; this.face = face;
-        this.packetSequence = packetSequence; this.readBatch = readBatch;
-        this.observedNanos = observedNanos; this.epochMillis = epochMillis;
+    public final int x;
+    public final int y;
+    public final int z;
+    public final int face;
+    public final long packetSequence;
+    public final long readBatch;
+    public final long observedNanos;
+    public final long epochMillis;
+
+    public DigEvent(
+        Action action,
+        int x,
+        int y,
+        int z,
+        int face,
+        long packetSequence,
+        long readBatch,
+        long observedNanos,
+        long epochMillis
+    ){
+        this.action = action;
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.face = face;
+        this.packetSequence = packetSequence;
+        this.readBatch = readBatch;
+        this.observedNanos = observedNanos;
+        this.epochMillis = epochMillis;
     }
 }

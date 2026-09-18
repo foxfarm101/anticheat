@@ -55,6 +55,10 @@ if(AC_BUILD_JNI)
         "${java_root}/bridge/EventWriter.java"
         "${java_root}/event/DigEvent.java"
         "${java_root}/event/MiningContext.java"
+        "${java_root}/packet/PacketInfo.java"
+        "${java_root}/packet/PacketHandlers.java"
+        "${java_root}/observation/ObservationModule.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/PacketHandlersTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/NativeSmokeTest.java")
     set(jni_header "${CMAKE_CURRENT_BINARY_DIR}/generated/dev_fox_anticheat_bridge_NativeBridge.h")
     add_custom_command(OUTPUT "${jni_header}"
@@ -70,6 +74,8 @@ if(AC_BUILD_JNI)
     target_link_libraries(anticheat_native PRIVATE anticheat_wire)
     # A library loaded by an existing JVM needs the JNI headers, not a link to libjvm.
     if(BUILD_TESTING)
+        add_test(NAME packet_handlers COMMAND "${Java_JAVA_EXECUTABLE}"
+            -cp "${CMAKE_CURRENT_BINARY_DIR}/java" dev.fox.anticheat.packet.PacketHandlersTest)
         add_test(NAME jni_smoke COMMAND "${Java_JAVA_EXECUTABLE}" -Xcheck:jni
             -cp "${CMAKE_CURRENT_BINARY_DIR}/java" dev.fox.anticheat.bridge.NativeSmokeTest
             "$<TARGET_FILE:anticheat_native>")

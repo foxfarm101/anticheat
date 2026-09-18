@@ -37,7 +37,14 @@ Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapte
         Session.java                   . Java-side player session tracking
 
         packet/
-          PacketObserver.java          . observes decoded Minecraft packets
+          PacketObserver.java          . captures packets and queues observations
+          PacketHandlers.java          . routes packet types to registered collectors
+          PacketInfo.java              . packet ordering and timing metadata
+
+        observation/
+          ObservationModule.java       . per-session collection interface
+          ObservationModules.java      . creates the per-session collection modules
+          MiningObservations.java      . digging requests and periodic mining snapshots
 
         version/
           MiningSampler.java           . samples relevant Spigot/NMS mining state
@@ -49,6 +56,7 @@ Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapte
         bridge/                        . Java side of Java ↔ C++ communication
           EventWriter.java             . serializes observations into bytes
           NativeBridge.java            . calls the C++ engine through JNI
+          ObservationSink.java         . shared event submission and finding output
 
       resources/
         plugin.yml                     . tells Spigot how to load the plugin
@@ -57,6 +65,8 @@ Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapte
   tests/                               . automated testing
     engine_tests.cpp                   . tests C++ engine and detection behavior
     NativeSmokeTest.java               . tests Java → JNI → C++ → Java
+    PacketHandlersTest.java            . tests collection routing and isolation
+    SessionSmokeTest.java              . tests session numbering and JNI submission
 
   CMakeLists.txt                       . C++/JNI build configuration
   build.ps1                            . Windows build/package script
@@ -69,7 +79,7 @@ Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapte
 
 1. Player starts mining block
 
-2. Raw bytes for `DigAction::start` are sent to the server
+2. The client sends a digging packet with `START_DESTROY_BLOCK` to the server
 
 3. Netty receives the raw bytes and decodes them into a `PacketPlayInBlockDig` packet
 
@@ -77,7 +87,7 @@ Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapte
 
 5. Java adapter takes a snapshot (sample) of the relevant server state (`MiningContext`)
 
-6. Java adapter converts the `PacketPlayInBlockDig` packet + sampled server state (`MiningContext`) into the server-specific `DigEvent` format
+6. Java adapter converts the `PacketPlayInBlockDig` packet + sampled server state (`MiningContext`) into the anticheat-specific `DigEvent` format
 
 7. JNI sends the serialized observation (`DigEvent` + its `EventHeader`) to C++ (`bridge/jni.cpp`)
 
@@ -159,7 +169,7 @@ build/libs/anticheat.jar
 build/libs/anticheat_native.dll
 ```
 
-The build first runs native tests and a Java-to-C++ JNI smoke test, then compiles the full adapter against your real server JAR.
+The build runs native, packet-routing, and JNI tests, then compiles the full adapter against your server JAR and tests Java session submission through JNI.
 
 ### Deploy with Spigot STOPPED
 
@@ -173,7 +183,7 @@ Copy-Item .\build\libs\anticheat_native.dll ..\server-1.8\plugins\FoxAntiCheat\a
 
 Joining should also report `Packet observer attached: session=...`.
 Mine ordinary stone in Survival while standing on solid ground. The default trace
-prints JSON records for `start`, `finish_no_flag`, aborts, or skipped attempts.
+prints JSON records for `dig_start`, `dig_finish_normal_sample`, aborts, or skipped attempts.
 Normal mining should NOT need to generate a suspicious finding to prove the
 pipeline works. The synthetic tests exercise early completion requests.
 
@@ -191,7 +201,12 @@ Set `trace=false` to suppress ordinary trace records. Suspicious reports remain.
 To add a check using existing observations, implement `Check`, register handlers for the
 needed types, register its factory in `builtins.cpp`, and add its source to CMake.
 Do not modify `Check`, `CheckManager`, or another check.
-For a new observation family, also extend the typed event/schema and adapter; that is collection work, not a redesign of the dispatcher.
+For new telemetry, implement an `ObservationModule` and register it in
+`ObservationModules.create()`. Register packet copiers and server-thread receivers
+with `PacketHandlers.on()`. Add payload serialization to `EventWriter` and decoding
+to `wire.cpp` when the C++ event format needs new data.
+Mining tracking belongs to `MiningObservations`, not `Session` or `AntiCheatPlugin`.
+Detection rules still belong in C++; a Java collection module is not a detector.
 
 ## Standalone engine build
 

@@ -52,6 +52,22 @@ try{
     [System.IO.File]::WriteAllLines($argFile, [string[]]$sources, ([System.Text.UTF8Encoding]::new($false)))
     Invoke-Checked $javac @("--release", "8", "-encoding", "UTF-8", "-cp", $ServerJar,
         "-d", $classes, "@$argFile")
+    # Exercise the Java session -> native engine path without starting Spigot.
+    $testClasses = Join-Path $PSScriptRoot "build\adapter-test-classes"
+    New-Item -ItemType Directory -Path $testClasses -Force | Out-Null
+    Invoke-Checked $javac @(
+        "--release", "8", "-encoding", "UTF-8",
+        "-cp", "$classes;$ServerJar",
+        "-d", $testClasses,
+        "tests/SessionSmokeTest.java"
+    )
+    Invoke-Checked (Join-Path $Jdk "bin\java.exe") @(
+        "-Xcheck:jni",
+        "-cp", "$testClasses;$classes;$ServerJar",
+        "dev.fox.anticheat.bridge.SessionSmokeTest",
+        (Join-Path $PSScriptRoot "build\native\anticheat_native.dll")
+    )
+
     $pluginJar = Join-Path $libs "anticheat.jar"
     Invoke-Checked $jar @("cf", $pluginJar, "-C", $classes, ".", "-C", "plugin/src/main/resources", ".")
     Copy-Item "build\native\anticheat_native.dll" (Join-Path $libs "anticheat_native.dll") -Force

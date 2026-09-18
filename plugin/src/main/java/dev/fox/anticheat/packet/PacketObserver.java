@@ -1,7 +1,11 @@
+/**
+ * PacketObserver.java observes decoded packets and queues copied observations.
+ * Packet-specific conversion belongs to registered collection modules.
+ */
+
 package dev.fox.anticheat.packet;
 
 import dev.fox.anticheat.Session;
-import dev.fox.anticheat.event.DigEvent;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -10,106 +14,173 @@ import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
-import net.minecraft.server.v1_8_R3.BlockPosition;
 import net.minecraft.server.v1_8_R3.MinecraftServer;
-import net.minecraft.server.v1_8_R3.PacketPlayInBlockDig;
 import org.bukkit.craftbukkit.v1_8_R3.entity.CraftPlayer;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class PacketObserver{
-    public interface Receiver{ void accept(Session session, DigEvent event, long generation); }
+    public interface Receiver{
+        void accept(Session session, Runnable observation, long generation);
+    }
+
     private static final String NAME = "fox_anticheat_native";
+    private static final int PLAYER_QUEUE_LIMIT = 128;
+    private static final int TOTAL_QUEUE_LIMIT = 1024;
+
     private final JavaPlugin plugin;
     private final Receiver receiver;
     private final LongSupplier clock;
     private final MinecraftServer server = MinecraftServer.getServer();
-    private final Map<Long, Channel> channels = new HashMap<>(); // Server thread only.
+    private final Map<Long, Channel> channels = new HashMap<>();
     private final AtomicInteger pending = new AtomicInteger();
     private volatile boolean running = true;
+
     public PacketObserver(JavaPlugin plugin, LongSupplier clock, Receiver receiver){
-        this.plugin = plugin; this.clock = clock; this.receiver = receiver;
+        this.plugin = plugin;
+        this.clock = clock;
+        this.receiver = receiver;
     }
+
+    // Install this session's observer before normal NMS packet processing.
+    // Call on the server thread; pipeline changes run on the channel's event loop.
     public void attach(Session session){
-        Channel channel = ((CraftPlayer) session.player).getHandle().playerConnection.networkManager.channel;
+        session.handlers.seal();
+
+        Channel channel = ((CraftPlayer) session.player).getHandle()
+            .playerConnection.networkManager.channel;
         channels.put(session.id, channel);
-        channel.eventLoop().execute(() -> {
-            if(!running || !session.active || !channel.isOpen()){ return; }
+
+        channel.eventLoop().execute(()->{
+            if(!running || !session.active || !channel.isOpen())
+                return;
+
             try{
-                if(channel.pipeline().get("packet_handler") == null || channel.pipeline().get(NAME) != null){
+                if(channel.pipeline().get("packet_handler") == null || channel.pipeline().get(NAME) != null)
                     throw new IllegalStateException("Unexpected pipeline; restart server without translators");
-                }
-                channel.pipeline().addBefore("packet_handler", NAME, new ChannelInboundHandlerAdapter(){
-                    private long sequence, batch;
-                    @Override
-                    public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception{
-                        try{
-                            long currentSequence = ++sequence;
-                            if(running && session.active){
-                                DigEvent event = normalize(message, currentSequence, batch);
-                                if(event != null){ submit(session, event); }
-                            }
-                        }catch(RuntimeException | LinkageError error){ fail(session, error); }
-                        finally{ ctx.fireChannelRead(message); }
-                    }
-                    @Override
-                    public void channelReadComplete(ChannelHandlerContext ctx) throws Exception{
-                        ++batch; ctx.fireChannelReadComplete();
-                    }
-                });
+
+                channel.pipeline().addBefore(
+                    "packet_handler",
+                    NAME,
+                    new ConnectionObserver(session)
+                );
+
                 plugin.getLogger().info("Packet observer attached: session=" + session.id);
-            }catch(RuntimeException | LinkageError error){ fail(session, error); }
+            }catch(RuntimeException | LinkageError error){
+                fail(session, error);
+            }
         });
     }
-    private DigEvent normalize(Object message, long sequence, long batch){
-        if(!(message instanceof PacketPlayInBlockDig)){ return null; }
-        PacketPlayInBlockDig packet = (PacketPlayInBlockDig) message;
-        DigEvent.Action action;
-        switch(packet.c()){
-            case START_DESTROY_BLOCK: action = DigEvent.Action.START; break;
-            case ABORT_DESTROY_BLOCK: action = DigEvent.Action.ABORT; break;
-            case STOP_DESTROY_BLOCK: action = DigEvent.Action.FINISH; break;
-            default: return null;
+
+    // Each connection has its own packet order and Netty read-cycle counter.
+    private final class ConnectionObserver extends ChannelInboundHandlerAdapter{
+        private final Session session;
+        private long sequence;
+        private long batch;
+
+        private ConnectionObserver(Session session){
+            this.session = session;
         }
-        BlockPosition p = packet.a();
-        return new DigEvent(action, p.getX(), p.getY(), p.getZ(), packet.b().ordinal(),
-            sequence, batch, clock.getAsLong(), System.currentTimeMillis());
+
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception{
+            try{
+                long currentSequence = ++sequence;
+
+                if(!running || !session.active)
+                    return;
+
+                // Capture the generation before copying, so a concurrent reset invalidates this work.
+                long generation = session.loss.get();
+                PacketInfo info = new PacketInfo(
+                    currentSequence,
+                    batch,
+                    clock.getAsLong(),
+                    System.currentTimeMillis()
+                );
+                Runnable observation = session.handlers.capture(message, info);
+
+                if(observation != null)
+                    submit(session, observation, generation);
+            }catch(RuntimeException | LinkageError error){
+                fail(session, error);
+            }finally{
+                // Observation must never swallow or forward the gameplay packet twice.
+                ctx.fireChannelRead(message);
+            }
+        }
+
+        @Override
+        public void channelReadComplete(ChannelHandlerContext ctx) throws Exception{
+            // A read cycle is not a client tick or necessarily one socket read.
+            ++batch;
+            ctx.fireChannelReadComplete();
+        }
     }
-    private void submit(Session session, DigEvent event){
+
+    // Bound queued work and hand the copied observations to the server thread.
+    private void submit(Session session, Runnable observation, long generation){
         int perPlayer = session.pending.incrementAndGet();
         int total = pending.incrementAndGet();
-        if(perPlayer > 128 || total > 1024){
-            session.pending.decrementAndGet(); pending.decrementAndGet();
-            session.loss.incrementAndGet(); return;
+
+        if(perPlayer > PLAYER_QUEUE_LIMIT || total > TOTAL_QUEUE_LIMIT){
+            release(session);
+            session.loss.incrementAndGet();
+            return;
         }
-        long generation = session.loss.get();
+
         try{
-            // Queue on the same FIFO used by 1.8.8 gameplay packet processing,
-            // BEFORE forwarding that packet. This is intentionally version-specific.
-            server.postToMainThread(() -> {
+            // Spigot 1.8.8 uses this queue for gameplay packet processing.
+            // Queue our snapshot first, then let channelRead forward the original packet.
+            server.postToMainThread(()->{
                 try{
-                    if(running && session.active){ receiver.accept(session, event, generation); }
-                }catch(RuntimeException | LinkageError error){ fail(session, error); }
-                finally{ session.pending.decrementAndGet(); pending.decrementAndGet(); }
+                    if(running && session.active)
+                        receiver.accept(session, observation, generation);
+                }catch(RuntimeException | LinkageError error){
+                    fail(session, error);
+                }finally{
+                    release(session);
+                }
             });
         }catch(RuntimeException | LinkageError error){
-            session.pending.decrementAndGet(); pending.decrementAndGet(); throw error;
+            release(session);
+            throw error;
         }
     }
+
+    private void release(Session session){
+        session.pending.decrementAndGet();
+        pending.decrementAndGet();
+    }
+
+    // Disable only this session's collection; normal gameplay packets still continue.
     private void fail(Session session, Throwable error){
-        session.failure = error.toString(); session.active = false;
+        session.failure = error.toString();
+        session.active = false;
         plugin.getLogger().severe("Observer disabled for session=" + session.id + ": " + error);
     }
+
     public void detach(long id){
         Channel channel = channels.remove(id);
-        if(channel == null){ return; }
+
+        if(channel == null)
+            return;
+
         try{
-            channel.eventLoop().execute(() -> {
-                if(channel.pipeline().get(NAME) != null){ channel.pipeline().remove(NAME); }
+            channel.eventLoop().execute(()->{
+                if(channel.pipeline().get(NAME) != null)
+                    channel.pipeline().remove(NAME);
             });
-        }catch(RejectedExecutionException ignored){ /* Channel event loop is already stopped. */ }
+        }catch(RejectedExecutionException ignored){
+            // A stopped event loop no longer delivers packets to this observer.
+        }
     }
+
+    // Stop accepting observations and remove every connection handler.
     public void close(){
         running = false;
-        for(Long id : channels.keySet().toArray(new Long[0])){ detach(id); }
+
+        for(Long id : channels.keySet().toArray(new Long[0])){
+            detach(id);
+        }
     }
 }
