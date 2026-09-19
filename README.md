@@ -74,47 +74,6 @@ Detection engine is written in C++, Java 8-compatible Spigot 1.8.8 is the adapte
   README.md                            . project documentation
 ```
 
-
-## High level overview
-
-1. Player starts mining block
-
-2. The client sends a digging packet with `START_DESTROY_BLOCK` to the server
-
-3. Netty receives the raw bytes and decodes them into a `PacketPlayInBlockDig` packet
-
-4. Java adapter observes the decoded packet
-
-5. Java adapter takes a snapshot (sample) of the relevant server state (`MiningContext`)
-
-6. Java adapter converts the `PacketPlayInBlockDig` packet + sampled server state (`MiningContext`) into the anticheat-specific `DigEvent` format
-
-7. JNI sends the serialized observation (`DigEvent` + its `EventHeader`) to C++ (`bridge/jni.cpp`)
-
-8. `wire.cpp` decodes the serialized observation into the C++ `ac::Event` whose payload contains the C++ `DigEvent` struct
-
-9. The detection engine (`engine.cpp`) processes the event via `Engine::process()`, which gets the player session via `EventHeader::session`, updates the session state, and creates `CheckContext`
-
-10. `CheckManager` sends the `DigEvent` and its `CheckContext` to the checks that have handlers registered for `DigEvent` observation type
-
-11. `FastBreakCheck` is one of those interested checks; it applies the FastBreak detection logic to that observation and evaluates suspiciousness
-
-12. `Finding`(s) are returned to Java from C++ via JNI
-
-### Detection logic
-
-- `DigEvent` -> `FastBreakCheck::on_dig()`
-
-- Track START/ABORT/FINISH
-
-- Compare START and FINISH timing
-
-- Calculate expected mining duration
-
-- Determine whether the attempt is within a suspicious threshold
-
-- Produce `Finding`(s)
-
 ## Boundaries
 
 ```
